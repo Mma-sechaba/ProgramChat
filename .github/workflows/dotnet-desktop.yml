@@ -1,0 +1,184 @@
+name: Build Cybersecurity ChatBot
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+    
+    - name: Display build information
+      run: |
+        echo "========================================"
+        echo "Building Cybersecurity Awareness Bot"
+        echo "Configuration: ${{ matrix.configuration }}"
+        echo "Build Number: ${{ github.run_number }}"
+        echo "========================================"
+      shell: cmd
+    
+    - name: Restore NuGet packages
+      run: nuget restore ProgramChat.csproj
+      working-directory: ${{ github.workspace }}
+      continue-on-error: true
+    
+    - name: Build the project
+      run: msbuild ProgramChat.csproj /p:Configuration=${{ matrix.configuration }} /p:Platform="Any CPU" /verbosity:minimal
+      working-directory: ${{ github.workspace }}
+    
+    - name: Verify build success
+      run: |
+        if exist "bin\${{ matrix.configuration }}\ProgramChat.exe" (
+          echo Build successful
+          echo Location: bin\${{ matrix.configuration }}\
+          dir "bin\${{ matrix.configuration }}\" | findstr "ProgramChat.exe"
+        ) else (
+          echo Build failed - executable not found
+          exit /b 1
+        )
+      shell: cmd
+      working-directory: ${{ github.workspace }}
+    
+    - name: Check for audio file
+      run: |
+        if exist "Hello.wav" (
+          echo Audio file found: Hello.wav
+        ) else (
+          echo Warning: Hello.wav not found - greeting sound will not play
+        )
+      shell: cmd
+      working-directory: ${{ github.workspace }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: CybersecurityBot-${{ matrix.configuration }}
+        path: |
+          bin\${{ matrix.configuration }}\*.exe
+          bin\${{ matrix.configuration }}\*.dll
+          bin\${{ matrix.configuration }}\*.pdb
+          bin\${{ matrix.configuration }}\*.config
+          Hello.wav
+        retention-days: 7
+        compression-level: 9
+    
+    - name: Create ZIP package (Release only)
+      if: matrix.configuration == 'Release'
+      run: |
+        powershell Compress-Archive -Path "bin\Release\*" -DestinationPath "ChatBot-Release-v${{ github.run_number }}.zip" -Force
+        echo Created: ChatBot-Release-v${{ github.run_number }}.zip
+      working-directory: ${{ github.workspace }}
+    
+    - name: Upload Release ZIP
+      if: matrix.configuration == 'Release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ChatBot-Release-ZIP
+        path: ChatBot-Release-*.zip
+        retention-days: 30
+
+  test:
+    name: Smoke Test
+    runs-on: windows-latest
+    needs: build
+    
+    steps:
+    - name: Download Release build
+      uses: actions/download-artifact@v4
+      with:
+        name: CybersecurityBot-Release
+        path: ./release-build
+    
+    - name: Test executable exists
+      run: |
+        if (Test-Path ".\release-build\ProgramChat.exe") {
+          Write-Host "Executable verified" -ForegroundColor Green
+          $fileInfo = Get-Item ".\release-build\ProgramChat.exe"
+          Write-Host "Size: $([math]::Round($fileInfo.Length / 1KB, 2)) KB" -ForegroundColor Cyan
+        } else {
+          Write-Error "Executable missing"
+          exit 1
+        }
+      shell: pwsh
+    
+    - name: Check required files
+      run: |
+        $requiredFiles = @("ProgramChat.exe", "ProgramChat.dll")
+        $missingFiles = @()
+        
+        foreach ($file in $requiredFiles) {
+          if (-not (Test-Path ".\release-build\$file")) {
+            $missingFiles += $file
+          }
+        }
+        
+        if ($missingFiles.Count -gt 0) {
+          Write-Warning "Missing files: $($missingFiles -join ', ')"
+        } else {
+          Write-Host "All required files present" -ForegroundColor Green
+        }
+      shell: pwsh
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+    
+    steps:
+    - name: Download Release ZIP
+      uses: actions/download-artifact@v4
+      with:
+        name: ChatBot-Release-ZIP
+        path: ./release-package
+    
+    - name: List downloaded files
+      run: |
+        ls -la ./release-package/
+      shell: bash
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: "Cybersecurity ChatBot v${{ github.run_number }}"
+        body: |
+          Cybersecurity Awareness Bot v${{ github.run_number }}
+          
+          Fixed in this release:
+          - Resolved CS1061 compile error using dynamic type
+          - Added null-safe response handling
+          - Improved conversation loop stability
+          
+          Installation:
+          1. Download the ZIP file below
+          2. Extract to any folder
+          3. Run ProgramChat.exe
+          
+          Requirements:
+          - Windows OS
+          - .NET Framework 4.7.2 or higher
+          - Audio capabilities for greeting sound
+        draft: false
+        prerelease: false
+        files: |
+          ./release-package/*.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
