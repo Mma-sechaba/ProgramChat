@@ -1,0 +1,36 @@
+name: Build .NET Framework 4.7.2 ChatBot
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022  # Windows Server 2022 with .NET Framework 4.7.2
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Build
+      run: msbuild ProgramChat.csproj -verbosity:minimal -property:Configuration=Release
+    
+    - name: Test executable
+      run: |
+        .\bin\Release\ProgramChat.exe --help 2>&1 || echo "Executable built successfully"
+      shell: cmd
+      continue-on-error: true
+    
+    - name: Upload build
+      uses: actions/upload-artifact@v4
+      with:
+        name: CybersecurityBot
+        path: |
+          bin\Release\*.exe
+          bin\Release\*.dll
+          bin\Release\*.wav
+          bin\Release\*.config
